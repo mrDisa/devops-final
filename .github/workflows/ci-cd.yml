@@ -1,0 +1,99 @@
+name: CI/CD
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+permissions:
+  contents: read
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm run lint
+  test:
+    needs: lint
+    runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test
+        options: >-
+          --health-cmd "pg_isready -U test -d test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm install
+      - run: npm test
+      - name: Deploy and verify monitoring
+        run: |
+          docker compose up -d --wait
+          curl --fail --retry 20 --retry-all-errors http://localhost:3000/
+          curl --fail http://localhost:3000/health
+          curl --fail http://localhost:3000/metrics | grep http_requests_total
+          for i in $(seq 1 30); do
+            if curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22app%22%7D' | jq -e '.data.result[0].value[1] == "1"'; then break; fi
+            sleep 3
+          done
+          curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22app%22%7D' | jq -e '.data.result[0].value[1] == "1"'
+          curl -fsS --retry 20 --retry-all-errors http://localhost:3001/api/health
+          curl -fsS -u admin:admin http://localhost:3001/api/datasources/uid/prometheus/health | jq -e '.status == "OK"'
+      - name: Stop initial stack
+        if: always()
+        run: docker compose down -v
+      - name: Verify Ansible and idempotence
+        run: |
+          sudo apt-get update
+          set -o pipefail
+          sudo apt-get install -y ansible
+          ansible-playbook -i localhost, deploy.yml | tee ansible-first.log
+          ansible-playbook -i localhost, deploy.yml | tee ansible-second.log
+          grep -E 'changed=0.*unreachable=0.*failed=0' ansible-second.log
+          curl -fsS --retry 20 --retry-all-errors http://localhost:3000/health
+        shell: bash
+      - name: Upload Ansible logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ansible-logs
+          path: ansible-*.log
+      - name: Stop Ansible stack
+        if: always()
+        run: if [ -f /opt/devops-final/docker-compose.yml ]; then sudo docker compose -f /opt/devops-final/docker-compose.yml down -v; fi
+  build-and-push:
+    needs: test
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set image name
+        id: image
+        run: echo "name=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ steps.image.outputs.name }}:latest
+            ${{ steps.image.outputs.name }}:${{ github.sha }}
