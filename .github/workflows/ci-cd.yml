@@ -6,6 +6,7 @@ on:
     branches: [main, develop]
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -74,6 +75,8 @@ jobs:
           curl -fsS --retry 20 --retry-all-errors http://localhost:3000/health
         shell: bash
       - name: Capture Ansible and repository evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: node scripts/capture-evidence.js ansible
       - name: Upload screenshots
         if: always()

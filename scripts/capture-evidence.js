@@ -37,7 +37,11 @@ ${sections.map(([heading, text]) => `<h2>${escape(heading)}</h2><pre>${escape(te
     await page.screenshot({ path: `${output}/${name}.png`, fullPage: true });
   }
   async function json(url) {
-    const response = await fetch(url, { headers: { 'User-Agent': 'devops-final-evidence' } });
+    const headers = { 'User-Agent': 'devops-final-evidence' };
+    if (url.startsWith('https://api.github.com/') && process.env.GH_TOKEN) {
+      headers.Authorization = 'Bearer ' + process.env.GH_TOKEN;
+    }
+    const response = await fetch(url, { headers });
     assert.equal(response.ok, true, `HTTP ${response.status}: ${url}`);
     return response.json();
   }
