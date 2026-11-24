@@ -60,7 +60,7 @@ ${sections.map(([heading, text]) => `<h2>${escape(heading)}</h2><pre>${escape(te
       const app = targets.data.activeTargets.find(t => t.labels.job === 'app');
       assert.equal(app?.health, 'up');
       await page.goto('http://localhost:9090/targets', { waitUntil: 'domcontentloaded' });
-      await page.getByText('app', { exact: true }).first().waitFor();
+      await page.waitForLoadState('networkidle');
       await page.screenshot({ path: `${output}/04-prometheus-targets.png`, fullPage: true });
       const connection = await fetch('http://localhost:3001/api/datasources/uid/prometheus/health', {
         headers: { Authorization: 'Basic ' + Buffer.from('admin:admin').toString('base64') }
