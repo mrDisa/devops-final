@@ -6,6 +6,7 @@ on:
     branches: [main, develop]
 permissions:
   contents: read
+  pull-requests: read
 jobs:
   lint:
     runs-on: ubuntu-24.04
@@ -38,6 +39,10 @@ jobs:
           node-version: '20'
       - run: npm install
       - run: npm test
+      - name: Install screenshot browser
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
       - name: Deploy and verify monitoring
         run: |
           docker compose up -d --wait
@@ -51,6 +56,11 @@ jobs:
           curl -fsS 'http://localhost:9090/api/v1/query?query=up%7Bjob%3D%22app%22%7D' | jq -e '.data.result[0].value[1] == "1"'
           curl -fsS --retry 20 --retry-all-errors http://localhost:3001/api/health
           curl -fsS -u admin:admin http://localhost:3001/api/datasources/uid/prometheus/health | jq -e '.status == "OK"'
+      - name: Capture application and monitoring screenshots
+        run: |
+          mkdir -p evidence
+          docker compose ps > evidence/docker-compose-ps.txt
+          node scripts/capture-evidence.js monitoring
       - name: Stop initial stack
         if: always()
         run: docker compose down -v
@@ -64,6 +74,17 @@ jobs:
           grep -E 'changed=0.*unreachable=0.*failed=0' ansible-second.log
           curl -fsS --retry 20 --retry-all-errors http://localhost:3000/health
         shell: bash
+      - name: Capture Ansible and repository evidence
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: node scripts/capture-evidence.js ansible
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: devops-evidence-test
+          path: evidence/
+          if-no-files-found: error
       - name: Upload Ansible logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -91,9 +112,27 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - uses: docker/build-push-action@v6
+        id: publish
         with:
           context: .
           push: true
           tags: |
             ${{ steps.image.outputs.name }}:latest
             ${{ steps.image.outputs.name }}:${{ github.sha }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Capture successful GHCR publication
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.publish.outputs.digest }}
+        run: |
+          npm install --no-save --package-lock=false playwright@1.56.1
+          npx playwright install --with-deps chromium
+          node scripts/capture-evidence.js publication
+      - name: Upload publication screenshot
+        uses: actions/upload-artifact@v4
+        with:
+          name: devops-evidence-ghcr
+          path: evidence/
+          if-no-files-found: error
