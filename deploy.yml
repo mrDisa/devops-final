@@ -1,0 +1,57 @@
+---
+- name: Deploy DevOps Final
+  hosts: localhost
+  connection: local
+  become: true
+  vars:
+    deploy_dir: /opt/devops-final
+  tasks:
+    - name: Check Docker Compose
+      ansible.builtin.command: docker compose version
+      register: compose_check
+      failed_when: false
+      changed_when: false
+    - name: Install Docker and Compose on Ubuntu
+      ansible.builtin.apt:
+        name: [docker.io, docker-compose-v2]
+        state: present
+        update_cache: true
+      when: compose_check.rc != 0
+    - name: Ensure Docker service is running
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+    - name: Create deployment directories
+      ansible.builtin.file:
+        path: '{{ item }}'
+        state: directory
+        mode: '0755'
+      loop:
+        - '{{ deploy_dir }}'
+        - '{{ deploy_dir }}/grafana/provisioning/datasources'
+    - name: Copy application and configuration files
+      ansible.builtin.copy:
+        src: '{{ playbook_dir }}/{{ item }}'
+        dest: '{{ deploy_dir }}/{{ item }}'
+        mode: '0644'
+      loop:
+        - app.js
+        - package.json
+        - Dockerfile
+        - .dockerignore
+        - docker-compose.yml
+        - prometheus.yml
+        - grafana/provisioning/datasources/prometheus.yml
+      register: copied
+    - name: Rebuild application when source changes
+      ansible.builtin.command: docker compose build app
+      args:
+        chdir: '{{ deploy_dir }}'
+      when: copied.changed
+    - name: Start stack
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: '{{ deploy_dir }}'
+      register: compose_up
+      changed_when: (compose_up.stdout ~ compose_up.stderr) is search('Created|Recreated|Started|Removed')

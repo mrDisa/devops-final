@@ -1,0 +1,10 @@
+const { test, before, after } = require('node:test');
+const assert = require('node:assert/strict');
+const server = require('../app');
+let base;
+before(async () => { await new Promise(resolve => server.listen(0, '127.0.0.1', resolve)); base = `http://127.0.0.1:${server.address().port}`; });
+after(async () => { await new Promise(resolve => server.close(resolve)); });
+test('GET /', async () => { const r = await fetch(base); assert.equal(r.status, 200); assert.equal(await r.text(), 'DevOps Final Project'); });
+test('GET /health', async () => { const r = await fetch(base+'/health'); assert.equal(r.status, 200); assert.deepEqual(await r.json(), {status:'ok'}); });
+test('GET /metrics', async () => { await fetch(base+'/health'); const r = await fetch(base+'/metrics'); const body = await r.text(); assert.equal(r.status,200); assert.match(body,/process_cpu_seconds_total/); assert.match(body,/http_requests_total\{method="GET",route="\/health",status="200"\}/); });
+test('unknown route returns 404', async () => { assert.equal((await fetch(base+'/unknown')).status,404); });
